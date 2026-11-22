@@ -1,0 +1,51 @@
+{
+  "name": "dsh-poem-rain",
+  "version": "1.5.0",
+  "private": true,
+  "type": "module",
+  "description": "Poem Rain — one line from your own writing falls into the corner of the window every couple of minutes. Import your own text; every line is synthesized locally.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "poetry",
+    "generative",
+    "web-audio",
+    "decoration",
+    "zh"
+  ],
+  "author": "mo-candy",
+  "license": "MIT",
+  "homepage": "https://wangzimo-archive.pages.dev/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mo-candy/dsh-poem-rain.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mo-candy/dsh-poem-rain/issues"
+  }
+}
