@@ -442,20 +442,17 @@ window.__ModuleLoader__.load({
     function load() {
       try {
         const raw = window.localStorage.getItem(KEY);
-        if (!raw) return { kept: [], paused: false, rain: false, sound: 'none', color: '232,196,122' };
+        if (!raw) return { kept: [], paused: false, sound: 'none', color: '232,196,122' };
         const o = JSON.parse(raw);
-        const sound = ['none', 'rain', 'chime'].includes(o.sound)
-          ? o.sound
-          : (o.rain === true ? 'rain' : 'none');
+        const sound = ['none', 'chime', 'city'].includes(o.sound) ? o.sound : 'none';
         return {
           kept: Array.isArray(o.kept) ? o.kept.slice(0, 40) : [],
           paused: !!o.paused,
-          rain: sound === 'rain',
           sound,
           color: typeof o.color === 'string' ? o.color : '232,196,122'
         };
       } catch (_) {
-        return { kept: [], paused: false, rain: false, sound: 'none', color: '232,196,122' };
+        return { kept: [], paused: false, sound: 'none', color: '232,196,122' };
       }
     }
 
@@ -533,82 +530,6 @@ window.__ModuleLoader__.load({
       return AC;
     }
 
-    function noiseBuffer(ctx, seconds) {
-      const n = Math.floor(ctx.sampleRate * seconds);
-      const buf = ctx.createBuffer(1, n, ctx.sampleRate);
-      const d = buf.getChannelData(0);
-      // 稍微“粉化”的白噪声：叠一个随机游走，比纯白噪更像雨
-      let last = 0;
-      for (let i = 0; i < n; i++) {
-        const w = Math.random() * 2 - 1;
-        last = 0.94 * last + 0.06 * w;
-        d[i] = w * 0.55 + last * 1.6;
-      }
-      return buf;
-    }
-
-    /** 一声雨：远雨幕 + 近处雨滴，1.4 秒自己散掉 */
-    function playRain(strength) {
-      const ctx = audioCtx();
-      if (!ctx) return;
-      if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
-      const t0 = ctx.currentTime;
-      const out = ctx.createGain();
-      out.gain.value = Math.max(0, Math.min(1, strength)) * 0.9;
-      out.connect(voiceBus || ctx.destination);
-
-      // —— 远雨幕：带通噪声，慢慢起来慢慢散
-      const src = ctx.createBufferSource();
-      src.buffer = noiseBuffer(ctx, 1.6);
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass'; bp.frequency.value = 1500; bp.Q.value = 0.62;
-      const hp = ctx.createBiquadFilter();
-      hp.type = 'highpass'; hp.frequency.value = 320;
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass'; lp.frequency.value = 8200;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.linearRampToValueAtTime(0.40, t0 + 0.10);
-      g.gain.exponentialRampToValueAtTime(0.0006, t0 + 1.55);
-      src.connect(bp); bp.connect(hp); hp.connect(lp); lp.connect(g); g.connect(out);
-      src.start(t0); src.stop(t0 + 1.6);
-
-      // —— 低处的水汽：一圈很轻的 78Hz 正弦
-      const sub = ctx.createOscillator();
-      sub.type = 'sine';
-      sub.frequency.setValueAtTime(78, t0);
-      sub.frequency.exponentialRampToValueAtTime(62, t0 + 1.2);
-      const sg = ctx.createGain();
-      sg.gain.setValueAtTime(0.0001, t0);
-      sg.gain.linearRampToValueAtTime(0.14, t0 + 0.12);
-      sg.gain.exponentialRampToValueAtTime(0.0004, t0 + 1.3);
-      sub.connect(sg); sg.connect(out);
-      sub.start(t0); sub.stop(t0 + 1.35);
-
-      // —— 雨滴：十几个短促的高频颗粒
-      const drops = 9 + Math.floor(Math.random() * 7);
-      for (let i = 0; i < drops; i++) {
-        const at = t0 + 0.05 + Math.random() * 1.15;
-        const dur = 0.012 + Math.random() * 0.03;
-        const dsrc = ctx.createBufferSource();
-        dsrc.buffer = noiseBuffer(ctx, dur + 0.02);
-        const dbp = ctx.createBiquadFilter();
-        dbp.type = 'bandpass';
-        dbp.frequency.value = 1800 + Math.random() * 3800;
-        dbp.Q.value = 3.2 + Math.random() * 4;
-        const dg = ctx.createGain();
-        const amp = (0.13 + Math.random() * 0.24) * (0.5 + strength * 0.5);
-        dg.gain.setValueAtTime(amp, at);
-        dg.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-        dsrc.connect(dbp); dbp.connect(dg); dg.connect(out);
-        dsrc.start(at); dsrc.stop(at + dur + 0.02);
-      }
-
-      // 1.7 秒后断掉这一轮的输出节点，别让它们堆在图上
-      window.setTimeout(() => { try { out.disconnect(); } catch (_) {} }, 1900);
-    }
-
-
     /** 木琴：基音 + 三个泛音，指数衰减；带一点延迟回声 */
     function pluckNote(ctx, at, semitone, dur, gain) {
       const f = 440 * Math.pow(2, (semitone - 69) / 12);
@@ -643,10 +564,18 @@ window.__ModuleLoader__.load({
       return true;
     }
 
+
+    /* 252 座城市：不带坐标，只用名字生成旋律 */
+    const CITY_NAMES = ['北京','上海','天津','重庆','广州','深圳','东莞','佛山','珠海','汕头','惠州','中山','江门','湛江','茂名','肇庆','梅州','韶关','清远','潮州','揭阳','汕尾','河源','阳江','云浮','南宁','桂林','柳州','北海','玉林','梧州','钦州','贵港','防城港','百色','河池','来宾','崇左','贺州','海口','三亚','儋州','昆明','大理','丽江','曲靖','玉溪','保山','昭通','普洱','临沧','红河','文山','楚雄','德宏','怒江','迪庆','西双版纳','贵阳','遵义','六盘水','安顺','毕节','铜仁','凯里','都匀','兴义','成都','绵阳','德阳','南充','宜宾','泸州','自贡','乐山','达州','内江','遂宁','攀枝花','广元','眉山','广安','资阳','雅安','巴中','西昌','武汉','宜昌','襄阳','荆州','黄石','十堰','荆门','孝感','黄冈','咸宁','恩施','随州','鄂州','长沙','株洲','湘潭','衡阳','岳阳','常德','邵阳','益阳','郴州','永州','怀化','娄底','张家界','吉首','郑州','洛阳','开封','南阳','新乡','安阳','商丘','许昌','平顶山','信阳','周口','驻马店','焦作','濮阳','三门峡','漯河','鹤壁','石家庄','唐山','保定','廊坊','秦皇岛','邯郸','邢台','沧州','张家口','承德','衡水','太原','大同','临汾','运城','长治','晋城','晋中','忻州','吕梁','朔州','阳泉','济南','青岛','烟台','潍坊','临沂','淄博','济宁','泰安','威海','日照','东营','德州','聊城','滨州','菏泽','枣庄','南京','苏州','无锡','常州','南通','徐州','扬州','盐城','泰州','镇江','淮安','连云港','宿迁','杭州','宁波','温州','绍兴','嘉兴','金华','台州','湖州','衢州','丽水','舟山','合肥','芜湖','蚌埠','安庆','阜阳','黄山','马鞍山','淮南','淮北','铜陵','宣城','六安','滁州','池州','亳州','宿州','福州','厦门','泉州','漳州','莆田','宁德','龙岩','三明','南平','南昌','赣州','九江','上饶','宜春','吉安','抚州','景德镇','萍乡','新余','鹰潭','呼和浩特','包头','鄂尔多斯','赤峰','通辽','呼伦贝尔','乌兰察布','巴彦淖尔','锡林郭勒','兴安盟','阿拉善','沈阳','大连','鞍山','抚顺','丹东','锦州','营口','盘锦','朝阳','本溪','葫芦岛','铁岭','辽阳','阜新','长春','吉林市','四平','通化','延吉','白山','松原','白城','辽源','哈尔滨','齐齐哈尔','大庆','牡丹江','佳木斯','绥化','鸡西','鹤岗','双鸭山','伊春','七台河','黑河','西安','咸阳','宝鸡','渭南','汉中','榆林','延安','安康','商洛','铜川','兰州','天水','白银','平凉','庆阳','陇南','武威','张掖','酒泉','定西','金昌','嘉峪关','银川','石嘴山','吴忠','固原','中卫','西宁','海东','格尔木','玉树','德令哈','乌鲁木齐','喀什','伊宁','昌吉','阿克苏','库尔勒','吐鲁番','哈密','克拉玛依','阿勒泰','塔城','和田','博乐','阿图什','拉萨','日喀则','林芝','昌都','那曲','山南','阿里','台北','高雄','台中','台南','花莲','香港','澳门','基隆'];
+
+    function pickCity() {
+      return CITY_NAMES[Math.floor(Math.random() * CITY_NAMES.length)];
+    }
+
     const SOUND_MODES = [
       { id: 'none', label: '静 音' },
-      { id: 'rain', label: '雨 声' },
-      { id: 'chime', label: '诗 音' }
+      { id: 'chime', label: '诗 音' },
+      { id: 'city', label: '城 市' }
     ];
 
     function primeAudio() {
@@ -779,7 +708,6 @@ window.__ModuleLoader__.load({
       const [kept, setKept] = useState(initial.current.kept);
       const [paused, setPaused] = useState(initial.current.paused);
       const [sound, setSound] = useState(initial.current.sound || 'none');
-      const rain = sound === 'rain';
       const [color, setColor] = useState(initial.current.color || DEFAULT_COLOR.rgb);
       const [pos, setPos] = useState(() => readPos());
       const dragRef = useRef(null);
@@ -789,6 +717,7 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(false);
       const [view, setView] = useState('list');
       const [draft, setDraft] = useState('');
+      const [nowPlaying, setNowPlaying] = useState('');
       const [importMsg, setImportMsg] = useState('');
       const [ownCount, setOwnCount] = useState(() => readUserLines().length);
 
@@ -811,10 +740,15 @@ window.__ModuleLoader__.load({
         setSaved(false);
         setOut(false);
         setDrop({ ...poem, id: Date.now() });
-        if (soundRef.current === 'rain') {
-          try { playRain(0.55); } catch (_) {}
-        } else if (soundRef.current === 'chime') {
+        if (soundRef.current === 'chime') {
           try { playChime(poem.main); } catch (_) {}
+          setNowPlaying('');
+        } else if (soundRef.current === 'city') {
+          const c = pickCity();
+          try { playChime(c); } catch (_) {}
+          setNowPlaying(c);
+        } else {
+          setNowPlaying('');
         }
         window.clearTimeout(hideTimer.current);
         if (!hovering.current) {
@@ -835,7 +769,7 @@ window.__ModuleLoader__.load({
       useEffect(() => () => window.clearTimeout(hideTimer.current), []);
 
       /* ---- 持久化 ---- */
-      useEffect(() => { save({ kept, paused, rain: sound === 'rain', sound, color }); }, [kept, paused, sound, color]);
+      useEffect(() => { save({ kept, paused, sound, color }); }, [kept, paused, sound, color]);
 
       // 第一次点击任意地方时解锁音频（浏览器要求用户手势）
       useEffect(() => {
@@ -1024,7 +958,7 @@ window.__ModuleLoader__.load({
               }, paused ? '继 续 落 诗' : '暂 停 落 诗'),
               h('button', {
                 className: 'pr-fbtn', type: 'button',
-                title: '声音：静音 / 雨声 / 诗音',
+                title: '声音：静音 / 诗音 / 城市',
                 onClick: () => {
                   const i = SOUND_MODES.findIndex((m) => m.id === sound);
                   const next = SOUND_MODES[(i + 1) % SOUND_MODES.length].id;
@@ -1053,8 +987,8 @@ window.__ModuleLoader__.load({
             h('div', { className: 'pr-bar' },
               h('span', { className: 'pr-hint' },
                 sound === 'none' ? '本地生成 · 静音'
-                  : sound === 'rain' ? '雨声 · 现场合成'
-                    : '诗音 · 每个字一个音'),
+                  : sound === 'chime' ? '诗音 · 每个字一个音'
+                    : (nowPlaying ? '城市 · ' + nowPlaying : '城市 · 随机一座')),
               h('button', {
                 className: 'pr-keep' + (saved ? ' done' : ''),
                 type: 'button',
@@ -1091,7 +1025,7 @@ window.__ModuleLoader__.load({
         const raw = window.localStorage.getItem(KEY);
         if (!raw) return 'none';
         const o = JSON.parse(raw);
-        return ['none', 'rain', 'chime'].includes(o.sound) ? o.sound : (o.rain === true ? 'rain' : 'none');
+        return ['none', 'chime', 'city'].includes(o.sound) ? o.sound : 'none';
       } catch (_) { return 'none'; }
     }
     function writeSound(id) {
@@ -1099,7 +1033,6 @@ window.__ModuleLoader__.load({
         const raw = window.localStorage.getItem(KEY);
         const o = raw ? JSON.parse(raw) : { kept: [], paused: false };
         o.sound = id;
-        o.rain = id === 'rain';
         window.localStorage.setItem(KEY, JSON.stringify(o));
       } catch (_) {}
     }
@@ -1107,6 +1040,7 @@ window.__ModuleLoader__.load({
     /** 设置页：Plugins → 诗雨 → 我的文字 */
     function SettingsPage() {
       const [draft, setDraft] = useState('');
+      const [nowPlaying, setNowPlaying] = useState('');
       const [stat, setStat] = useState({ saved: 0, parsed: 0, msg: '' });
 
       useEffect(() => {
@@ -1190,16 +1124,16 @@ window.__ModuleLoader__.load({
         ),
         h('p', { className: 'ps-p', style: { marginTop: '22px', marginBottom: '8px' } }, '落诗时的声音'),
         h('div', { className: 'ps-row', style: { marginTop: '0' } },
-          ['none', 'rain', 'chime'].map((id) => h('button', {
+          SOUND_MODES.map((m) => h('button', {
             key: id,
-            className: 'ps-b' + (readSound() === id ? '' : ' ghost'),
+            className: 'ps-b' + (readSound() === m.id ? '' : ' ghost'),
             type: 'button',
             onClick: () => {
-              writeSound(id);
-              if (id !== 'none') primeAudio();
-              setStat((st) => ({ ...st, msg: '声音已设为「' + (SOUND_MODES.find((m) => m.id === id) || {}).label + '」' }));
+              writeSound(m.id);
+              if (m.id !== 'none') primeAudio();
+              setStat((st) => ({ ...st, msg: '声音已设为「' + m.label + '」' }));
             }
-          }, id === 'none' ? '静 音' : id === 'rain' ? '雨 声' : '诗 音'))
+          }, m.label))
         ),
         h('p', { className: 'ps-p', style: { marginTop: '20px', fontSize: '11.5px' } },
           '文字只存在这台机器的浏览器本地存储里，不上传、不同步。内置的 252 行诗作为默认；一旦你导入，就只从你的文字里抽。'
